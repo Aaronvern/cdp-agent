@@ -1,4 +1,7 @@
 const { HumanMessage } = require("@langchain/core/messages");
+const TwitterService = require("../utils/twitter");
+const { processProductAnalysis } = require("../server");
+const readline = require("readline");
 
 async function runAutonomousMode(agent, config, interval = 10) {
   console.log("Starting autonomous mode...");
@@ -25,18 +28,57 @@ async function runAutonomousMode(agent, config, interval = 10) {
   }
 }
 
+async function displayAnalysisResults(result) {
+  console.log("\n=== Analysis Summary ===");
+  console.log(`Total Mentions: ${result.summary.totalMentions}`);
+  console.log(`High Engagement Tweets: ${result.summary.highEngagementCount}`);
+  console.log(`Verified Mentions: ${result.summary.verifiedMentions}`);
+  
+  console.log("\n=== Sentiment Breakdown ===");
+  console.log(result.summary.sentiment);
+  
+  console.log("\n=== Product Summary ===");
+  console.log(result.analysis.summary);
+  
+  console.log("\n=== Generated Meme Coin Template ===");
+  console.log(JSON.stringify(result.analysis.template, null, 2));
+  
+  console.log("\n=== IPFS Storage Information ===");
+  if (result.ipfs.mock) {
+    console.log('Note: Using mock IPFS data (Pinata credentials not configured)');
+  } else if (result.ipfs.error) {
+    console.log('Warning: Failed to store on IPFS -', result.ipfs.error);
+  } else {
+    console.log(`IPFS URI: ${result.ipfs.uri}`);
+    console.log(`Gateway URL: ${result.ipfs.gateway_url}`);
+  }
+}
+
 async function runChatMode(agent, config) {
-  console.log("Starting chat mode... Type 'exit' to end.");
-
-  const readline = require("readline");
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  const question = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
-
+  let rl;
   try {
+    console.log("Starting chat mode... Type 'exit' to end.");
+    console.log("Available commands:");
+    console.log("- kamkardo: Analyze Twitter data and create meme coin template");
+    console.log("- exit: End the session");
+    
+    let twitterService;
+    try {
+      twitterService = new TwitterService();
+      console.log("✓ Twitter service initialized successfully");
+    } catch (error) {
+      console.error("✗ Failed to initialize Twitter service:", error.message);
+      console.log("Please check your Twitter API credentials in .env file");
+      throw error;
+    }
+    
+    rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const question = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
+
     while (true) {
       const userInput = await question("\nPrompt: ");
 
@@ -44,8 +86,50 @@ async function runChatMode(agent, config) {
         break;
       }
 
-      const stream = await agent.stream({ messages: [new HumanMessage(userInput)] }, config);
+      if (userInput.toLowerCase().startsWith("kamkardo")) {
+        console.log("\n=== Starting Twitter Analysis ===");
+        
+        // Get required inputs
+        const twitterHandle = await question("Enter Twitter handle (without @): ");
+        const productInfo = await question("Enter product info: ");
+        const walletAddress = await question("Enter wallet address (or press enter to use current wallet): ");
+        
+        const finalWalletAddress = walletAddress.trim() || config.walletAddress;
+        
+        try {
+          console.log("\n🔍 Analyzing Twitter data and generating template...");
+          const result = await processProductAnalysis(twitterService, {
+            twitterHandle,
+            productInfo,
+            walletAddress: finalWalletAddress
+          });
+          
+          // Display results
+          console.log("\n✓ Analysis completed successfully!");
+          console.log("\n=== Generated Template ===");
+          console.log(JSON.stringify(result.template, null, 2));
+          
+          console.log("\n=== IPFS Storage ===");
+          if (result.ipfs.mock) {
+            console.log('⚠️  Using mock IPFS data (Pinata credentials not configured)');
+          } else if (result.ipfs.error) {
+            console.log('⚠️  Failed to store on IPFS:', result.ipfs.error);
+          } else {
+            console.log('✓ Successfully stored on IPFS:');
+            console.log(`URI: ${result.ipfs.uri}`);
+            console.log(`Gateway URL: ${result.ipfs.gateway_url}`);
+          }
+        } catch (error) {
+          console.error("\n✗ Error during analysis:", error.message);
+          if (error.message.includes('Twitter API')) {
+            console.log("Please check your Twitter API credentials and rate limits");
+          }
+        }
+        continue;
+      }
 
+      // Normal agent interaction
+      const stream = await agent.stream({ messages: [new HumanMessage(userInput)] }, config);
       for await (const chunk of stream) {
         if ("agent" in chunk) {
           console.log(chunk.agent.messages[0].content);
@@ -56,10 +140,12 @@ async function runChatMode(agent, config) {
       }
     }
   } catch (error) {
-    console.error("Error:", error.message);
-    process.exit(1);
+    console.error("Fatal error:", error.message);
+    throw error;
   } finally {
-    rl.close();
+    if (rl) {
+      rl.close();
+    }
   }
 }
 

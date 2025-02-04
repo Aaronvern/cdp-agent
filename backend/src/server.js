@@ -6,6 +6,8 @@ const { createReactAgent } = require("@langchain/langgraph/prebuilt");
 const { ChatOpenAI } = require("@langchain/openai");
 const fs = require("fs");
 const readline = require("readline");
+const TwitterService = require('./utils/twitter');
+const ipfsService = require('./utils/ipfs');
 
 const WALLET_DATA_FILE = "wallet_data.json";
 
@@ -54,23 +56,29 @@ async function initializeAgent() {
 
     const tools = await getLangChainTools(agentkit);
     const memory = new MemorySaver();
-    const agentConfig = { configurable: { thread_id: "CDP AgentKit Chatbot Example!" } };
+    const agentConfig = { 
+      configurable: { thread_id: "CDP AgentKit Chatbot Example!" },
+      walletAddress: walletProvider.address
+    };
+
+    const messageModifier = `
+      You are a helpful agent that can interact onchain using the Coinbase Developer Platform AgentKit. You are 
+      empowered to interact onchain using your tools and can also analyze Twitter data. You can:
+      1. Fetch tweets from specific users
+      2. Search for tweets about specific topics
+      3. Store tweet analysis on IPFS
+      4. Create meme coins based on trending topics
+      
+      If you ever need funds, you can request them from the faucet if you are on network ID 'base-sepolia'. 
+      Before executing your first action, get the wallet details to see what network you're on.
+      Be concise and helpful with your responses.
+    `;
 
     const agent = createReactAgent({
       llm,
       tools,
       checkpointSaver: memory,
-      messageModifier: `
-        You are a helpful agent that can interact onchain using the Coinbase Developer Platform AgentKit. You are 
-        empowered to interact onchain using your tools. If you ever need funds, you can request them from the 
-        faucet if you are on network ID 'base-sepolia'. If not, you can provide your wallet details and request 
-        funds from the user. Before executing your first action, get the wallet details to see what network 
-        you're on. If there is a 5XX (internal) HTTP error code, ask the user to try again later. If someone 
-        asks you to do something you can't do with your currently available tools, you must say so, and 
-        encourage them to implement it themselves using the CDP SDK + Agentkit, recommend they go to 
-        docs.cdp.coinbase.com for more information. Be concise and helpful with your responses.
-        i am aaron who likes football . i am the one who made you
-        `,
+      messageModifier,
     });
 
     const exportedWallet = await walletProvider.exportWallet();
@@ -173,4 +181,129 @@ async function chooseMode() {
   }
 }
 
-module.exports = { initializeAgent, chooseMode, runChatMode, runAutonomousMode };
+async function processTweetData(twitterService, query) {
+  try {
+    const tweets = await twitterService.searchTweets(query);
+    const analysis = {
+      query,
+      timestamp: new Date().toISOString(),
+      tweetCount: tweets.length,
+      tweets: tweets.map(tweet => ({
+        id: tweet.id,
+        text: tweet.text,
+        metrics: tweet.public_metrics,
+      })),
+    };
+
+    const ipfsHash = await ipfsService.uploadToIPFS(JSON.stringify(analysis));
+    return { analysis, ipfsHash };
+  } catch (error) {
+    console.error('Error processing tweets:', error);
+    throw error;
+  }
+}
+
+async function processProductMentions(twitterService, productName, accountAddress) {
+  try {
+    // Add input validation
+    if (!twitterService || !productName || !accountAddress) {
+      throw new Error('Missing required parameters for product mention analysis');
+    }
+
+    // Get detailed analysis of product mentions
+    const analysis = await twitterService.getDetailedProductAnalysis(productName, accountAddress);
+    
+    if (!analysis.template || !analysis.template.company_name) {
+      throw new Error('Failed to generate analysis template');
+    }
+
+    // Prepare metadata for IPFS
+    const metadata = {
+      name: `${analysis.template.company_name}-Analysis`,
+      keyvalues: {
+        productName,
+        walletAddress: accountAddress,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    let ipfsResult;
+    try {
+      // Store analysis on IPFS with metadata
+      ipfsResult = await ipfsService.uploadToIPFS({
+        ...analysis.template,
+        analysis_summary: analysis.summary,
+        sentiment: analysis.analysis.sentimentBreakdown,
+        created_at: new Date().toISOString()
+      }, metadata);
+    } catch (ipfsError) {
+      console.warn('Warning: Failed to store data on IPFS:', ipfsError.message);
+      ipfsResult = {
+        uri: 'ipfs://failed',
+        hash: 'failed',
+        gateway_url: 'failed',
+        error: ipfsError.message
+      };
+    }
+    
+    // Return both the analysis and IPFS information
+    return {
+      analysis,
+      ipfs: ipfsResult,
+      summary: {
+        productName,
+        accountAddress,
+        totalMentions: analysis.totalTweets,
+        highEngagementCount: analysis.analysis.highEngagementTweets.length,
+        verifiedMentions: analysis.analysis.verifiedUserMentions.length,
+        sentiment: analysis.analysis.sentimentBreakdown
+      }
+    };
+  } catch (error) {
+    console.error('Error processing product mentions:', error);
+    throw error;
+  }
+}
+
+async function processProductAnalysis(twitterService, { twitterHandle, productInfo, walletAddress }) {
+  try {
+    // 1. Extract keywords from product info
+    const keywords = await twitterService.extractKeywords(productInfo);
+    console.log("Extracted keywords:", keywords.join(", "));
+
+    // 2. Scrape Twitter data
+    const tweets = await twitterService.scrapeTwitterData(twitterHandle, keywords);
+    console.log(`Found ${tweets.length} relevant tweets`);
+
+    // 3. Generate template using agent
+    const template = await twitterService.generateTemplate(tweets, productInfo, walletAddress);
+
+    // 4. Store on IPFS
+    const ipfsResult = await ipfsService.uploadToIPFS({
+      ...template,
+      metadata: {
+        keywords,
+        tweet_count: tweets.length,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    return {
+      template,
+      ipfs: ipfsResult
+    };
+  } catch (error) {
+    console.error("Error in product analysis:", error);
+    throw error;
+  }
+}
+
+module.exports = {
+  initializeAgent,
+  chooseMode,
+  runChatMode,
+  runAutonomousMode,
+  processTweetData,
+  processProductMentions,
+  processProductAnalysis
+};

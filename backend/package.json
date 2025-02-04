@@ -1,0 +1,26 @@
+{
+  "name": "onchain-agent-backend",
+  "version": "1.0.0",
+  "description": "Backend for onchain agent",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@coinbase/agentkit": "^0.1.1",
+    "@coinbase/cdp-langchain": "^0.0.15",
+    "@langchain/core": "^0.3.37",
+    "@langchain/openai": "^0.4.2",
+    "@pinata/sdk": "^2.1.0",
+    "dotenv": "^16.4.7",
+    "fs": "^0.0.1-security",
+    "readline": "^1.3.0",
+    "twitter-api-v2": "^1.15.0",
+    "viem": "^2.22.21"
+  }
+} 
