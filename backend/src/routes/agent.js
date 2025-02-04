@@ -1,14 +1,46 @@
 const { HumanMessage } = require("@langchain/core/messages");
-const TwitterService = require("../utils/twitter");
-const { processProductAnalysis } = require("../server");
+const TwitterService = require("../services/twitterService");
+const ipfsService = require("../services/ipfsService");
 const readline = require("readline");
+
+async function processProductAnalysis(twitterService, { twitterHandle, productInfo, walletAddress }) {
+  try {
+    // 1. Extract keywords from product info
+    const keywords = await twitterService.extractKeywords(productInfo);
+    console.log("Extracted keywords:", keywords.join(", "));
+
+    // 2. Scrape Twitter data
+    const tweets = await twitterService.scrapeTwitterData(twitterHandle, keywords);
+    console.log(`Found ${tweets.length} relevant tweets`);
+
+    // 3. Generate template using agent
+    const template = await twitterService.generateTemplate(tweets, productInfo, walletAddress);
+
+    // 4. Store on IPFS
+    const ipfsResult = await ipfsService.uploadToIPFS({
+      ...template,
+      metadata: {
+        keywords,
+        tweet_count: tweets.length,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    return {
+      template,
+      ipfs: ipfsResult
+    };
+  } catch (error) {
+    console.error("Error in product analysis:", error);
+    throw error;
+  }
+}
 
 async function runAutonomousMode(agent, config, interval = 10) {
   console.log("Starting autonomous mode...");
   while (true) {
     try {
       const thought = "Be creative and do something interesting on the blockchain.";
-
       const stream = await agent.stream({ messages: [new HumanMessage(thought)] }, config);
 
       for await (const chunk of stream) {
@@ -89,7 +121,6 @@ async function runChatMode(agent, config) {
       if (userInput.toLowerCase().startsWith("kamkardo")) {
         console.log("\n=== Starting Twitter Analysis ===");
         
-        // Get required inputs
         const twitterHandle = await question("Enter Twitter handle (without @): ");
         const productInfo = await question("Enter product info: ");
         const walletAddress = await question("Enter wallet address (or press enter to use current wallet): ");
@@ -104,7 +135,6 @@ async function runChatMode(agent, config) {
             walletAddress: finalWalletAddress
           });
           
-          // Display results
           console.log("\n✓ Analysis completed successfully!");
           console.log("\n=== Generated Template ===");
           console.log(JSON.stringify(result.template, null, 2));
@@ -149,4 +179,8 @@ async function runChatMode(agent, config) {
   }
 }
 
-module.exports = { runChatMode, runAutonomousMode };
+module.exports = { 
+  runChatMode, 
+  runAutonomousMode,
+  processProductAnalysis // Export if needed elsewhere
+};

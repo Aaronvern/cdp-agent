@@ -1,5 +1,5 @@
-// utils/ipfs.js
 const pinataSDK = require('@pinata/sdk');
+const config = require('../config/config');
 
 class IPFSService {
   constructor() {
@@ -9,31 +9,27 @@ class IPFSService {
   initializePinata() {
     if (this.pinata) return;
 
-    const apiKey = process.env.PINATA_API_KEY;
-    const secretKey = process.env.PINATA_SECRET_KEY;
-
-    if (!apiKey || !secretKey) {
+    if (!config.ipfs.pinataApiKey || !config.ipfs.pinataSecretKey) {
       throw new Error(
-        'Missing Pinata API credentials in environment variables.\n' +
-        'Please add PINATA_API_KEY and PINATA_SECRET_KEY to your .env file.\n' +
-        'You can get these credentials by signing up at https://app.pinata.cloud/'
+        'Missing Pinata API credentials.\n' +
+        'Please add PINATA_API_KEY and PINATA_SECRET_KEY to your .env file.'
       );
     }
 
-    this.pinata = new pinataSDK(apiKey, secretKey);
+    this.pinata = new pinataSDK(
+      config.ipfs.pinataApiKey,
+      config.ipfs.pinataSecretKey
+    );
   }
 
   async uploadToIPFS(content, metadata = {}) {
     try {
-      // Initialize Pinata if not already initialized
       this.initializePinata();
 
-      // Add input validation
       if (!content) {
         throw new Error('Content is required for IPFS upload');
       }
 
-      // Ensure content is properly stringified if it's an object
       const contentToUpload = typeof content === 'object' ? 
         JSON.stringify(content) : content;
 
@@ -59,7 +55,6 @@ class IPFSService {
     } catch (error) {
       if (error.message.includes('Missing Pinata API credentials')) {
         console.error('\nPinata API credentials are missing. Data will not be stored on IPFS.');
-        // Return a mock response for development/testing
         return {
           uri: 'ipfs://mock-hash',
           hash: 'mock-hash',
@@ -73,4 +68,4 @@ class IPFSService {
   }
 }
 
-module.exports = new IPFSService();
+module.exports = new IPFSService(); 
